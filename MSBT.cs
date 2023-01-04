@@ -1,9 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
+using System.Linq;
 
 namespace MsbtEditor
 {
@@ -169,6 +171,262 @@ namespace MsbtEditor
 			return encoding.GetString(_text);
 		}
 	}
+
+	public class EntryData
+    {
+		public enum Type
+        {
+			Text,
+			Font,
+			ShowSpecific,
+			Unknown
+        }
+
+		public List<(Type, string)> entries = new List<(Type, string)>();
+		public Encoding encoding;
+
+		public EntryData(Encoding enc) {
+			encoding = enc;
+		}
+
+		public EntryData(string data, Encoding enc)
+        {
+			encoding = enc;
+			entries = EntryData.ToEntries(data, encoding);
+        }
+
+		public static List<(Type, string)> ToEntries(string data, Encoding enc)
+        {
+			List<(Type, string)> res = new List<(Type, string)>();
+
+			string[] info = Regex.Split(data, "(<.*?>)").ToList().Where(e => e != "").ToArray();
+
+			foreach (string line in info)
+			{
+				if (line.StartsWith("<") && line.EndsWith(">"))
+                {
+					string inner_info = line.Substring(1, line.Length - 2).Trim();
+					if (inner_info == "")
+						continue;
+					string[] tmp = inner_info.Split('=');
+					if (tmp.Length != 2)
+						continue;
+					string type = tmp[0].ToLower();
+					string value = tmp[1].Trim();
+					if (type == "size")
+                    {
+						if (value == "" || value == "0")
+							value = "100";
+						res.Add((Type.Font, $"Size: {value}"));
+                    }
+					else if (type == "color")
+                    {
+						int color = 0;
+						string output = "";
+						if (value.StartsWith("#") && value.Length > 2)
+							output = Convert.ToInt32($"0x{value.Substring(1, value.Length - 1)}", 16).ToString();
+						else
+                        {
+							if(!int.TryParse(value, out color))
+                            {
+								output = value;
+                            } else
+                            {
+								output = color.ToString();
+                            }
+                        }
+
+						res.Add((Type.Font, $"Color: {output}"));
+					}
+				} else
+                {
+					res.Add((Type.Text, line));
+                }
+			}
+
+			return res;
+        }
+
+		public EntryData(byte[] data, Encoding enc)
+        {
+			encoding = enc;
+			int index = 0;
+			while (index < data.Length)
+			{
+				// Marker
+				if (data[index] == 0x0E && data[index + 1] == 0x00)
+                {
+					parseMarker(data, ref index);
+                } else
+                {
+					parseText(data, ref index);
+                }
+            }
+        }
+
+        public override string ToString()
+        {
+			string res = "";
+			foreach((Type, string) entry in entries)
+            {
+				if (entry.Item1 == Type.Text)
+					res += entry.Item2;
+				else if (entry.Item1 == Type.Font)
+				{
+					string[] info = entry.Item2.Split(':');
+					string type = info[0].ToLower();
+					string info_data = info[1].Trim();
+					if (type == "size")
+						res += $"<size={info_data}>";
+					else if (type == "color")
+                    {
+						int tmp;
+						if(int.TryParse(info_data, out tmp))
+							res += $"<color=#{tmp.ToString("X2")}>";
+						else
+							res += $"<color={info_data}>";
+                    }
+				}
+				else
+					res += entry.Item2;
+			}
+			return res;
+        }
+
+        public void parseMarker(byte[] data, ref int index)
+        {
+			Type marker_type = Type.Unknown;
+			string info = "";
+			// Index will be at the start of the modifier
+			index += 2;
+			int type = BitConverter.ToInt16(data, index);
+			if (type == 0x0)
+            {
+				marker_type = Type.Font;
+				index += 2;
+
+				int font_modifier_type = BitConverter.ToInt16(data, index);
+				index += 2;
+
+				if(font_modifier_type == 2) // Size
+                {
+					int param_size = BitConverter.ToInt16(data, index);
+					index += 2;
+					int font_size;
+					if (param_size == 1)
+						font_size = (int)data[index];
+					else if(param_size == 2)
+						font_size = BitConverter.ToInt16(data, index);
+					else if(param_size == 4)
+						font_size = BitConverter.ToInt32(data, index);
+					else
+						font_size = BitConverter.ToInt16(data, index);
+					info += $"Size: {font_size}\n";
+					index += 2;
+				} else if(font_modifier_type == 3) // Color
+                {
+					int param_size = BitConverter.ToInt16(data, index);
+					index += 2;
+
+					byte red = data[index];
+					index += 1;
+					byte green = data[index];
+					index += 1;
+					byte blue = data[index];
+					index += 1;
+					byte alpha = data[index];
+					index += 1;
+
+					Color c = Color.FromArgb(alpha, red, green, blue);
+
+
+					info += $"Color: {c.ToArgb()}\n";
+				}
+            }
+			entries.Add((marker_type, info));
+		}
+
+		static int ConcatBytes(byte b1, byte b2)
+        {
+			int combined = b1 << 8 | b2;
+			return combined;
+        }
+
+		public void parseText(byte[] data, ref int index)
+		{
+			List<byte> cache = new List<byte>();
+			while(index < data.Length)
+            {
+				if (data[index] != 0x0E)
+                {
+					cache.Add(data[index]);
+                } else
+                {
+					break;
+                }
+
+				index += 1;
+			}
+			entries.Add((Type.Text, encoding.GetString(cache.ToArray())));
+		}
+
+		public byte[] ToBytes()
+        {
+			List<byte> resulting_data = new List<byte>();
+
+			foreach ((EntryData.Type, string) entry in this.entries)
+			{
+				if(entry.Item1 == Type.Text)
+                {
+					resulting_data.AddRange(encoding.GetBytes(entry.Item2));
+                } else if(entry.Item1 == Type.Font)
+                {
+					string[] font_data = entry.Item2.Trim().Split('\n');
+					foreach (string font_entry_data in font_data)
+					{
+						resulting_data.AddRange(new byte[] { 0x0E, 0x00 }); // Add Normal byte marker
+						resulting_data.AddRange(new byte[] { 0x00, 0x00 }); // Specify Font Modification
+
+						string[] info = font_entry_data.Split(':');
+						string type = info[0].ToLower();
+						string info_data = info[1].Trim();
+						if (type == "size")
+                        {
+							resulting_data.AddRange(new byte[] { 0x02, 0x00 }); // Add Size Specifer
+							resulting_data.AddRange(new byte[] { 0x02, 0x00 }); // Specify Paramaters
+
+							UInt16 size = UInt16.Parse(info_data);
+							resulting_data.AddRange(BitConverter.GetBytes((UInt16)size));
+                        }
+						else if (type == "color")
+                        {
+							resulting_data.AddRange(new byte[] { 0x03, 0x00 }); // Add Color Specifer
+							resulting_data.AddRange(new byte[] { 0x04, 0x00 }); // Specify Paramaters
+
+							int output = 0;
+							Color c;
+							if (!int.TryParse(info_data, out output))
+								c = Color.FromName(info_data);
+							else
+								c = Color.FromArgb(output);
+
+							byte alpha = c.A;
+							byte red = c.R;
+							byte green = c.G;
+							byte blue = c.B;
+
+
+							resulting_data.AddRange(new byte[] { red, green, blue, alpha  }); // Add Colors
+						}
+					}
+				}
+			}
+			resulting_data.AddRange(new byte[] { 0x00, 0x00 });
+			return resulting_data.ToArray();
+        }
+	}
+
+
 
 	public class InvalidMSBTException : Exception
 	{
@@ -856,8 +1114,13 @@ namespace MsbtEditor
 							xmlLabelAttribute.Value = lbl.Name;
 							xmlEntry.Attributes.Append(xmlLabelAttribute);
 
+							XmlAttribute xmlBase64Attribute = xmlDocument.CreateAttribute("base64");
+							xmlBase64Attribute.Value = "true";
+							xmlEntry.Attributes.Append(xmlBase64Attribute);
+
 							XmlElement xmlString = xmlDocument.CreateElement("text");
-							xmlString.InnerText = FileEncoding.GetString(lbl.String.Value).Replace("\n", "\r\n").TrimEnd('\0').Replace("\0", @"\0");
+							XmlCDataSection xmlCData = xmlDocument.CreateCDataSection(Base64Encode(FileEncoding.GetString(lbl.String.Value).Replace("\n", "\r\n").TrimEnd('\0')));
+							xmlString.AppendChild(xmlCData);
 							xmlEntry.AppendChild(xmlString);
 						}
 
@@ -903,7 +1166,12 @@ namespace MsbtEditor
 					foreach (XmlNode entry in xmlRoot.SelectNodes("entry"))
 					{
 						string label = entry.Attributes["label"].Value;
-						byte[] str = FileEncoding.GetBytes(entry.SelectSingleNode("text").InnerText.Replace("\r\n", "\n").Replace(@"\0", "\0") + "\0");
+						byte[] str;
+						
+						if(entry.Attributes["base64"] != null && entry.Attributes["base64"].Value == "true")
+							str = FileEncoding.GetBytes(Base64Decode(entry.SelectSingleNode("text").InnerText).Replace("\r\n", "\n"));
+						else
+							str = FileEncoding.GetBytes(entry.SelectSingleNode("text").InnerText.Replace("\r\n", "\n") + "\0");
 
 						if (labels.ContainsKey(label))
 							labels[label].String.Value = str;
@@ -976,8 +1244,13 @@ namespace MsbtEditor
 								xmlLabelAttribute.Value = lbl.Name;
 								xmlEntry.Attributes.Append(xmlLabelAttribute);
 
+								XmlAttribute xmlBase64Attribute = xmlDocument.CreateAttribute("base64");
+								xmlBase64Attribute.Value = "true";
+								xmlEntry.Attributes.Append(xmlBase64Attribute);
+
 								XmlElement xmlString = xmlDocument.CreateElement("text");
-								xmlString.InnerText = FileEncoding.GetString(lbl.String.Value).Replace("\n", "\r\n").TrimEnd('\0').Replace("\0", @"\0");
+								XmlCDataSection xmlCData = xmlDocument.CreateCDataSection(Base64Encode(FileEncoding.GetString(lbl.String.Value)));
+								xmlString.AppendChild(xmlCData);
 								xmlEntry.AppendChild(xmlString);
 							}
 						}
@@ -1002,6 +1275,18 @@ namespace MsbtEditor
 			}
 
 			return result;
+		}
+
+		public string Base64Encode(string plainText)
+		{
+			var plainTextBytes = FileEncoding.GetBytes(plainText);
+			return Convert.ToBase64String(plainTextBytes);
+		}
+
+		public string Base64Decode(string base64EncodedData)
+		{
+			var base64EncodedBytes = Convert.FromBase64String(base64EncodedData);
+			return FileEncoding.GetString(base64EncodedBytes);
 		}
 	}
 }

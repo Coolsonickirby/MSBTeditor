@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
+using System.Drawing;
 using System.Windows.Forms;
 using MsbtEditor.Properties;
 using Be.Windows.Forms;
@@ -14,11 +14,18 @@ namespace MsbtEditor
 		private MSBT _msbt = null;
 		private bool _fileOpen = false;
 		private bool _hasChanges = false;
+		private float _defaultFontSize = 15;
+		private Font _defaultFont;
+		private Color _defaultColor;
 
 		public frmMain(string[] args)
 		{
 			InitializeComponent();
 			this.Icon = Resources.msbteditor;
+
+			_defaultFont = new Font(txtPreview.Font.FontFamily, _defaultFontSize, txtPreview.Font.Style);
+			_defaultColor = txtPreview.ForeColor;
+			txtEdit.Font = new Font(txtEdit.Font.FontFamily, _defaultFontSize, txtEdit.Font.Style);
 
 			if (args.Length > 0 && File.Exists(args[0]))
 				OpenFile(args[0]);
@@ -212,7 +219,7 @@ namespace MsbtEditor
 				_msbt.Save();
 				_hasChanges = false;
 				UpdateTextView();
-				UpdateOriginalText();
+				UpdatePreviewView();
 				UpdateHexView();
 				UpdateForm();
 			}
@@ -229,7 +236,7 @@ namespace MsbtEditor
 			txtLabelName.Text = ent.ToString();
 
 			UpdateTextView();
-			UpdateOriginalText();
+			UpdatePreviewView();
 			UpdateHexView();
 		}
 
@@ -270,17 +277,20 @@ namespace MsbtEditor
 
 		private void txtEdit_KeyUp(object sender, KeyEventArgs e)
 		{
-			string result = txtEdit.Text;
+			_hasChanges = true;
+			EntryData data = new EntryData(txtEdit.Text, _msbt.FileEncoding);
 
-			IEntry ent = (IEntry)lstStrings.SelectedItem;
-			ent.Value = _msbt.FileEncoding.GetBytes(result.Replace("\r\n", "\n").Replace(@"\0", "\0") + "\0");
+			UpdatePreviewView(data);
 
-			if (txtEdit.Text != txtOriginal.Text)
-				_hasChanges = true;
+            IEntry ent = (IEntry)lstStrings.SelectedItem;
+            ent.Value = data.ToBytes();
 
-			UpdateHexView();
-			UpdateForm();
-		}
+            //if (txtEdit.Text != txtOriginal.Text)
+            //	_hasChanges = true;
+
+            UpdateHexView();
+            UpdateForm();
+        }
 
 		protected void hbxEdit_Changed(object sender, EventArgs e)
 		{
@@ -294,25 +304,78 @@ namespace MsbtEditor
 
 			UpdateTextView();
 			UpdateForm();
+		}
 
-			if (txtEdit.Text != txtOriginal.Text)
-				_hasChanges = true;
+		private void UpdateRichTextBox(RichTextBox textBox, EntryData eData)
+        {
+			textBox.Font = _defaultFont;
+			textBox.ForeColor = _defaultColor;
+			textBox.Clear();
+			
+			Font current_font = textBox.Font;
+			Color current_color = textBox.ForeColor;
+
+			foreach ((EntryData.Type, string) entry in eData.entries)
+			{
+				if (entry.Item1 == EntryData.Type.Text)
+				{
+					if (entry.Item2 == "\0" || entry.Item2 == "")
+						continue;
+
+					int start = textBox.TextLength;
+					textBox.Text += entry.Item2;
+					textBox.SelectionStart = start;
+					textBox.SelectionLength = entry.Item2.Length;
+					textBox.SelectionFont = current_font;
+					textBox.SelectionColor = current_color;
+				}
+				else if (entry.Item1 == EntryData.Type.Font)
+				{
+					string[] font_data = entry.Item2.Trim().Split('\n');
+					foreach (string font_entry_data in font_data)
+					{
+						string[] info = font_entry_data.Split(':');
+						string type = info[0].ToLower();
+						string info_data = info[1].Trim(); 
+						if (type == "size")
+						{
+							float new_size = float.Parse(info_data) / 100;
+							current_font = new Font(textBox.Font.FontFamily, _defaultFontSize * new_size, textBox.Font.Style);
+						} else if (type == "color")
+                        {
+							int output = 0;
+							if(int.TryParse(info_data, out output))
+								current_color = Color.FromArgb(output);
+                            else
+								current_color = Color.FromName(info_data);
+						}
+					}
+				}
+			}
 		}
 
 		private void UpdateTextView()
 		{
 			IEntry ent = (IEntry)lstStrings.SelectedItem;
+			EntryData eData = new EntryData(ent.Value, _msbt.FileEncoding);
 
-			txtEdit.Text = _msbt.FileEncoding.GetString(ent.Value).Replace("\n", "\r\n").TrimEnd('\0').Replace("\0", @"\0") + "\0";
-
-			slbAddress.Text = "String: " + (ent.Index + 1);
+			txtEdit.Text = eData.ToString();
+			//txtEdit.Text = _msbt.FileEncoding.GetString(ent.Value).TrimEnd('\0').Replace("\0", @"\0") + "\0";
+			//slbAddress.Text = "String: " + (ent.Index + 1);
 		}
 
-		private void UpdateOriginalText()
+		private void UpdatePreviewView(EntryData data)
 		{
 			IEntry ent = (IEntry)lstStrings.SelectedItem;
 
-			txtOriginal.Text = _msbt.FileEncoding.GetString(_msbt.TXT2.OriginalStrings[(int)ent.Index].Value).Replace("\n", "\r\n").TrimEnd('\0').Replace("\0", @"\0") + "\0";
+			UpdateRichTextBox(txtPreview, data);
+		}
+
+		private void UpdatePreviewView()
+		{
+			IEntry ent = (IEntry)lstStrings.SelectedItem;
+			EntryData data = new EntryData(txtEdit.Text, _msbt.FileEncoding);
+			UpdateRichTextBox(txtPreview, data);
 		}
 
 		private void UpdateHexView()
@@ -352,7 +415,7 @@ namespace MsbtEditor
 			btnAddLabel.Enabled = _fileOpen && _msbt.HasLabels;
 			btnDeleteLabel.Enabled = _fileOpen && _msbt.HasLabels;
 			txtEdit.Enabled = _fileOpen;
-			txtOriginal.Enabled = _fileOpen;
+			txtPreview.Enabled = _fileOpen;
 			hbxHexView.Enabled = _fileOpen;
 		}
 
