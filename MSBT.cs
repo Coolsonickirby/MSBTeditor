@@ -1129,7 +1129,7 @@ namespace MsbtEditor
 							}
 
 							XmlElement xmlString = xmlDocument.CreateElement("text");
-							XmlCDataSection xmlCData = xmlDocument.CreateCDataSection(Convert.ToBase64String(data));
+							XmlCDataSection xmlCData = xmlDocument.CreateCDataSection(Convert.ToBase64String(data.ToArray()));
 							xmlString.AppendChild(xmlCData);
 							xmlEntry.AppendChild(xmlString);
 						}
