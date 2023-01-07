@@ -1,3 +1,10 @@
+# New stuff
+- You can use `<size=XX>` and `<color=(#AARRGGBB/Color Name/just the integer value)>`
+- "Export to XMSBT" now exports it as base64 (which means stuff like a empty newline + character to make a extra line spacing work should actually work now)
+
+# New bugs
+- If it encounters an unknown marker, then it'll just give up (you'll need to either A. manually hex edit it (not that bad) or B. just use the normal MSBTEditor Reloaded)
+
 # MSBT Editor Reloaded
 I created this editor a while ago to support a translation project I was planning; Which is now cancelled since Picross 3D 2 is slated for a North American release. It has since grown beyond anything I could have imagined and is now used by many in the modding community on all sorts of projects. I hope you find it useful in your own projects!
 
