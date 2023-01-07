@@ -1118,8 +1118,18 @@ namespace MsbtEditor
 							xmlBase64Attribute.Value = "true";
 							xmlEntry.Attributes.Append(xmlBase64Attribute);
 
+							List<byte> data = lbl.String.Value.ToList();
+
+							if (data.Count > 2)
+							{
+								if (data[data.Count - 2] != 0)
+								{
+									data.AddRange(new byte[] { 0x00, 0x00 });
+								}
+							}
+
 							XmlElement xmlString = xmlDocument.CreateElement("text");
-							XmlCDataSection xmlCData = xmlDocument.CreateCDataSection(Base64Encode(FileEncoding.GetString(lbl.String.Value).Replace("\n", "\r\n").TrimEnd('\0')));
+							XmlCDataSection xmlCData = xmlDocument.CreateCDataSection(Convert.ToBase64String(data));
 							xmlString.AppendChild(xmlCData);
 							xmlEntry.AppendChild(xmlString);
 						}
@@ -1249,7 +1259,19 @@ namespace MsbtEditor
 								xmlEntry.Attributes.Append(xmlBase64Attribute);
 
 								XmlElement xmlString = xmlDocument.CreateElement("text");
-								XmlCDataSection xmlCData = xmlDocument.CreateCDataSection(Base64Encode(FileEncoding.GetString(lbl.String.Value)));
+
+								List<byte> data = lbl.String.Value.ToList();
+								
+								if(data.Count > 2)
+                                {
+									if(data[data.Count - 2] != 0)
+									{
+										data.AddRange(new byte[] { 0x00, 0x00 });
+									}
+                                }
+								
+
+								XmlCDataSection xmlCData = xmlDocument.CreateCDataSection(Convert.ToBase64String(data.ToArray()));
 								xmlString.AppendChild(xmlCData);
 								xmlEntry.AppendChild(xmlString);
 							}
